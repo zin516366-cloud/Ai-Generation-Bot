@@ -154,15 +154,23 @@ addMissingColumns() {
                 }
                 
                 const columns = rows.map(row => row.name);
+                // ✅ ဒီမှာ column ရှိပြီးသားလား စစ်ပါ
                 if (!columns.includes(col.column)) {
                     const alterSql = `ALTER TABLE ${col.table} ADD COLUMN ${col.column} ${col.type}`;
                     this.db.run(alterSql, (alterErr) => {
                         if (alterErr) {
-                            console.error(`Error adding column ${col.column} to ${col.table}:`, alterErr);
+                            // ❌ duplicate column error ကို ignore လုပ်ပါ
+                            if (alterErr.message && alterErr.message.includes('duplicate column name')) {
+                                console.log(`Column ${col.column} already exists in ${col.table}, skipping...`);
+                            } else {
+                                console.error(`Error adding column ${col.column} to ${col.table}:`, alterErr);
+                            }
                         } else {
-                            console.log(`Added column ${col.column} to ${col.table}`);
+                            console.log(`✅ Added column ${col.column} to ${col.table}`);
                         }
                     });
+                } else {
+                    console.log(`✅ Column ${col.column} already exists in ${col.table}, skipping...`);
                 }
             });
         } catch (error) {
