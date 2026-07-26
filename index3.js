@@ -1813,6 +1813,18 @@ Your credentials will be saved for feathuer use!`;
         const userInfo = await userSession.apiInstance.getUserInfo();
         const gameId = String(userInfo.userId || "").trim();
 
+        // ✅ If gameId is empty, reject login
+        if (!gameId || gameId === '' || gameId === '0' || gameId === 'null') {
+            await this.bot.editMessageText(
+                `Login Failed!\n\nInvalid Game ID received.\nPlease try again.`,
+                {
+                    chat_id: chatId,
+                    message_id: loadingMsg.message_id
+                }
+            );
+            return;
+        }
+
         const now = Date.now();
 
         // ✅ Save user credentials first
@@ -1871,23 +1883,22 @@ Your credentials will be saved for feathuer use!`;
                 `Time: ${getMyanmarTime()}`
             );
 
-            // ✅ Continue to login success
         } else {
-            // ✅ STEP 2: Check if Game ID already has trial
+            // ✅ STEP 2: Check if Game ID already has trial (any user)
             const gameTrial = await this.db.get(
-                "SELECT user_id, trial_start, trial_expire FROM users WHERE game_id = ?",
+                "SELECT user_id, trial_start, trial_expire FROM users WHERE game_id = ? AND trial_start > 0",
                 [gameId]
             );
 
-            if (gameTrial && gameTrial.trial_start > 0) {
-                // Game ID အတွက် trial ရှိပြီးသား
+            if (gameTrial) {
+                // ✅ Game ID already has a trial (active or expired)
                 if (Date.now() < gameTrial.trial_expire) {
-                    // Trial still active
+                    // ✅ Trial still active
                     if (gameTrial.user_id == userId) {
                         // Same user - trial is active
                         console.log(` User ${userId} has active trial for game ${gameId}`);
                     } else {
-                        // Different user trying to use same Game ID with active trial
+                        // ❌ Different user trying to use same Game ID with active trial
                         await this.bot.editMessageText(
 `Login Failed!
 
@@ -1906,7 +1917,7 @@ Please contact admin for assistance.
                         return;
                     }
                 } else {
-                    // Trial expired
+                    // ❌ Trial expired - cannot be used again by anyone
                     await this.bot.editMessageText(
 `Login Failed!
 
@@ -4096,9 +4107,9 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
     const gameId = match[1].trim();
 
     try {
-        // ✅ Check if game_id exists in users
+        // ✅ Check if game_id exists in users and has trial
         const user = await this.db.get(
-            "SELECT user_id FROM users WHERE game_id = ?",
+            "SELECT user_id, trial_start, trial_expire FROM users WHERE game_id = ?",
             [gameId]
         );
 
@@ -4109,10 +4120,12 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
         );
 
         if (user) {
-            // ✅ Remove trial completely (set to 0) so user cannot get new trial
+            // ✅ IMPORTANT: Keep trial_start as is (don't reset to 0)
+            // This prevents the same Game ID from getting new trial
+            // But set trial_expire to 0 to make it expired
             await this.db.run(
                 `UPDATE users
-                 SET trial_start = 0, trial_expire = 0
+                 SET trial_expire = 0
                  WHERE game_id = ?`,
                 [gameId]
             );
@@ -4120,9 +4133,9 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
             await this.bot.sendMessage(
                 chatId,
                 `✅ Game ID ${gameId} removed from allowed list.\n\n` +
-                `User ${user.user_id} trial has been REMOVED.\n` +
-                `This user CANNOT get new trial.\n` +
-                `They must be added to allowed list again to use the bot.`
+                `User ${user.user_id} - Game ID trial has been EXPIRED.\n` +
+                `This Game ID CANNOT get new trial.\n` +
+                `It must be added to allowed list again to be used.`
             );
         } else {
             await this.bot.sendMessage(
