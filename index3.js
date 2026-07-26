@@ -2610,17 +2610,21 @@ Last update: ${getMyanmarTime()}`;
         }
 
         const userInfo = await userSession.apiInstance.getUserInfo();
-        const gameId = String(userInfo.userId).trim();
+const gameId = String(userInfo.userId).trim();
 
-        // Admin Allow ကို အရင်စစ်
-        const allowed = await this.isGameIdAllowed(gameId);
+console.log("Game ID =", gameId);
 
-        if (!allowed) {
+const allowed = await this.isGameIdAllowed(gameId);
 
-            const trial = await this.db.get(
-                "SELECT trial_expire FROM users WHERE game_id=?",
-                [gameId]
-            );
+console.log("Allowed =", allowed);
+
+// Admin Allow စစ်
+if (!allowed) {
+
+    const trial = await this.db.get(
+        "SELECT trial_expire FROM users WHERE game_id=?",
+        [gameId]
+    );
 
             if (!trial || Date.now() > trial.trial_expire) {
 
@@ -4287,8 +4291,6 @@ console.log("Colour Betting Support: WINGO 1 MIN and WINGO 30S only");
 console.log("Win/Loss Messages: ENABLED");
 console.log("Myanmar Time System: ENABLED");
 console.log("Press Ctrl+C to stop.");
-console.log("Allowed =", await this.isGameIdAllowed(gameId));
-console.log("Game ID =", gameId);
 const bot = new AutoLotteryBot();
 
 process.on('SIGINT', () => {
