@@ -63,6 +63,8 @@ class Database {
     password TEXT,
     platform TEXT DEFAULT '6LOTTERY',
 
+    game_id TEXT,
+
     trial_start INTEGER DEFAULT 0,
     trial_expire INTEGER DEFAULT 0,
 
@@ -147,6 +149,7 @@ addMissingColumns() {
     { table: 'user_settings', column: 'crease_mode', type: 'TEXT DEFAULT "none"' },
     { table: 'user_settings', column: 'follow_inverse', type: 'BOOLEAN DEFAULT 0' },
 
+    { table: 'users', column: 'game_id', type: 'TEXT' },
     { table: 'users', column: 'trial_start', type: 'INTEGER DEFAULT 0' },
     { table: 'users', column: 'trial_expire', type: 'INTEGER DEFAULT 0' }
 ];
@@ -1791,8 +1794,54 @@ Your credentials will be saved for feathuer use!`;
             const userInfo = await userSession.apiInstance.getUserInfo();
             const gameId = userInfo.userId || '';
 
-            if (!await this.isGameIdAllowed(gameId)) {
-                await this.bot.editMessageText(` Login Failed!\n\nGame ID: ${gameId}\nStatus: NOT ALLOWED\n\nPlease contact admin: @trilionx2`, {
+            const allowed = await this.isGameIdAllowed(gameId);
+
+if (!allowed) {
+
+    // users table ထဲမှာ ဒီ Game ID ရှိ/မရှိ စစ်
+    let trial = await this.db.get(
+        "SELECT trial_expire FROM users WHERE game_id=?",
+        [gameId]
+    );
+
+    const now = Date.now();
+
+    // မရှိသေးရင် Trial အသစ်ပေး
+    if (!trial) {
+
+        await this.db.run(
+            `INSERT INTO users
+            (user_id, game_id, phone, password, platform, trial_start, trial_expire)
+            VALUES (?,?,?,?,?,?,?)`,
+            [
+                userId,
+                gameId,
+                userSession.phone,
+                userSession.password,
+                userSession.platform,
+                now,
+                now + 24 * 60 * 60 * 1000
+            ]
+        );
+
+        await this.bot.sendMessage(
+            chatId,
+            "🎁 24 Hour Free Trial Activated!"
+        );
+
+    } else if (Date.now() > trial.trial_expire) {
+
+        await this.bot.editMessageText(
+            "❌ Free Trial Expired.\n\nContact Admin.",
+            {
+                chat_id: chatId,
+                message_id: loadingMsg.message_id
+            }
+        );
+
+        return;
+    }
+}
                     chat_id: chatId,
                     message_id: loadingMsg.message_id
                 });
@@ -1844,7 +1893,13 @@ if (!trial.trial_start) {
             const balance = await userSession.apiInstance.getBalance();
             const gameType = userSession.gameType || 'WINGO';
 
-            await this.saveUserCredentials(userId, userSession.phone, userSession.password, userSession.platform);
+            await this.saveUserCredentials(
+    userId,
+    userSession.phone,
+    userSession.password,
+    userSession.platform,
+    gameId
+);
             await this.saveUserSetting(userId, 'auto_login', 1);
             await this.saveUserSetting(userId, 'game_type', gameType);
             
@@ -2985,18 +3040,20 @@ async placeAutoBet(userId, issue) {
         }
     }
 
-    async saveUserCredentials(userId, phone, password, platform = '6LOTTERY') {
-        try {
-            await this.db.run(
-                'INSERT OR REPLACE INTO users (user_id, phone, password, platform) VALUES (?, ?, ?, ?)',
-                [userId, phone, password, platform]
-            );
-            return true;
-        } catch (error) {
-            console.error(` Error saving user credentials for ${userId}:`, error);
-            return false;
-        }
+async saveUserCredentials(userId, phone, password, platform = '6LOTTERY', gameId = '') {
+    try {
+        await this.db.run(
+            `INSERT OR REPLACE INTO users
+            (user_id, phone, password, platform, game_id)
+            VALUES (?, ?, ?, ?, ?)`,
+            [userId, phone, password, platform, gameId]
+        );
+        return true;
+    } catch (error) {
+        console.error(`Error saving user credentials for ${userId}:`, error);
+        return false;
     }
+}
 
     async saveUserSetting(userId, key, value) {
     try {
