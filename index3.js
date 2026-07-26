@@ -3974,9 +3974,9 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
         try {
             for (const gameId of gameIds) {
                 await this.db.run(
-                    'INSERT OR REPLACE INTO allowed_game_ids (game_id, added_by) VALUES (?, ?)',
-                    [gameId, userId]
-                );
+    'INSERT OR REPLACE INTO allowed_game_ids (game_id) VALUES (?)',
+    [gameId]
+);
             }
 
             await this.bot.sendMessage(chatId, ` Game IDs added successfully!\n\nAdded: ${gameIds.join(', ')}\nTotal: ${gameIds.length} game IDs`);
