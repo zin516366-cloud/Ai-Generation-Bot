@@ -2599,32 +2599,41 @@ Last update: ${getMyanmarTime()}`;
     }
 
     async runBot(chatId, userId) {
+
+    try {
+
         const userSession = this.ensureUserSession(userId);
 
-const userInfo = await userSession.apiInstance.getUserInfo();
-const gameId = String(userInfo.userId).trim();
+        if (!userSession.loggedIn) {
+            await this.bot.sendMessage(chatId, "Please login first!");
+            return;
+        }
 
-// Admin Allow စစ်
-const allowed = await this.isGameIdAllowed(gameId);
+        const userInfo = await userSession.apiInstance.getUserInfo();
+        const gameId = String(userInfo.userId).trim();
 
-if (!allowed) {
+        // Admin Allow ကို အရင်စစ်
+        const allowed = await this.isGameIdAllowed(gameId);
 
-    const trial = await this.db.get(
-        "SELECT trial_expire FROM users WHERE game_id=?",
-        [gameId]
-    );
+        if (!allowed) {
 
-    if (!trial || Date.now() > trial.trial_expire) {
+            const trial = await this.db.get(
+                "SELECT trial_expire FROM users WHERE game_id=?",
+                [gameId]
+            );
 
-        await this.bot.sendMessage(
-            chatId,
-            "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
-        );
+            if (!trial || Date.now() > trial.trial_expire) {
 
-        return;
-    }
-}
-        
+                await this.bot.sendMessage(
+                    chatId,
+                    "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
+                );
+
+                return;
+            }
+        }
+
+    
         try {
             
             if (!userSession.loggedIn) {
@@ -4278,6 +4287,8 @@ console.log("Colour Betting Support: WINGO 1 MIN and WINGO 30S only");
 console.log("Win/Loss Messages: ENABLED");
 console.log("Myanmar Time System: ENABLED");
 console.log("Press Ctrl+C to stop.");
+console.log("Allowed =", await this.isGameIdAllowed(gameId));
+console.log("Game ID =", gameId);
 const bot = new AutoLotteryBot();
 
 process.on('SIGINT', () => {
