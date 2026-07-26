@@ -1781,9 +1781,10 @@ Your credentials will be saved for feathuer use!`;
     const userSession = this.ensureUserSession(userId);
 
     if (!userSession.phone || !userSession.password) {
-        await this.bot.sendMessage(chatId, "Please enter phone number and password first!", {
-            reply_markup: this.getLoginKeyboard()
-        });
+        await this.bot.sendMessage(chatId,
+            "Please enter phone number and password first!",
+            { reply_markup: this.getLoginKeyboard() }
+        );
         return;
     }
 
@@ -1793,6 +1794,8 @@ Your credentials will be saved for feathuer use!`;
     );
 
     try {
+
+        // Login
         const result = await userSession.apiInstance.login(
             userSession.phone,
             userSession.password
@@ -1800,7 +1803,7 @@ Your credentials will be saved for feathuer use!`;
 
         if (!result.success) {
             await this.bot.editMessageText(
-                `Login failed: ${result.message}`,
+                `Login failed!\n\n${result.message}`,
                 {
                     chat_id: chatId,
                     message_id: loadingMsg.message_id
@@ -1809,11 +1812,13 @@ Your credentials will be saved for feathuer use!`;
             return;
         }
 
+        // User Info
         const userInfo = await userSession.apiInstance.getUserInfo();
         const gameId = String(userInfo.userId || "").trim();
+
         const now = Date.now();
 
-        // User Record မရှိရင် Create
+        // User Record Create
         await this.db.run(
             `INSERT OR IGNORE INTO users
             (user_id, phone, password, platform, game_id)
@@ -1827,87 +1832,63 @@ Your credentials will be saved for feathuer use!`;
             ]
         );
 
-        // Trial Check
-        let trial = await this.db.get(
-            "SELECT trial_start, trial_expire FROM users WHERE game_id=?",
-            [gameId]
-        );
+        // ------------------------
+        // ADMIN ALLOW CHECK
+        // ------------------------
 
-        if (!trial || trial.trial_start == 0) {
+        const allowed = await this.isGameIdAllowed(gameId);
 
-            await this.db.run(
-                `UPDATE users
-                 SET trial_start=?,
-                     trial_expire=?,
-                     game_id=?
-                 WHERE user_id=?`,
-                [
-                    now,
-                    now + 24 * 60 * 60 * 1000,
-                    gameId,
-                    userId
-                ]
+        if (!allowed) {
+
+            const trial = await this.db.get(
+                "SELECT trial_start,trial_expire FROM users WHERE game_id=?",
+                [gameId]
             );
 
-            await this.bot.sendMessage(
-                chatId,
-                "🎁 24 Hour Free Trial Activated!"
-            );
+            if (!trial || trial.trial_start == 0) {
 
-        } else if (now > trial.trial_expire) {
+                await this.db.run(
+                    `UPDATE users
+                    SET
+                    game_id=?,
+                    trial_start=?,
+                    trial_expire=?
+                    WHERE user_id=?`,
+                    [
+                        gameId,
+                        now,
+                        now + (24 * 60 * 60 * 1000),
+                        userId
+                    ]
+                );
 
-const allowed = await this.isGameIdAllowed(gameId);
+                await this.bot.sendMessage(
+                    chatId,
+                    "🎁 New Game ID\n\n24 Hour Free Trial Activated!"
+                );
 
-if (!allowed) {
+            } else if (now > trial.trial_expire) {
 
-    const trial = await this.db.get(
-        "SELECT trial_start, trial_expire FROM users WHERE game_id=?",
-        [gameId]
-    );
+                await this.bot.editMessageText(
+`Login Failed!
 
-    const now = Date.now();
+Game ID : ${gameId}
 
-    if (!trial || trial.trial_start == 0) {
+Status : TRIAL EXPIRED
 
-        await this.db.run(
-            `UPDATE users
-             SET game_id=?,
-                 trial_start=?,
-                 trial_expire=?
-             WHERE user_id=?`,
-            [
-                gameId,
-                now,
-                now + 24 * 60 * 60 * 1000,
-                userId
-            ]
-        );
+Please contact admin
+@trilionx2`,
+                    {
+                        chat_id: chatId,
+                        message_id: loadingMsg.message_id
+                    }
+                );
 
-        await this.bot.sendMessage(
-            chatId,
-            "🎁 24 Hour Free Trial Activated!"
-        );
-
-    } else if (now > trial.trial_expire) {
-
-        await this.bot.editMessageText(
-            `Login Failed!
-
-Game ID: ${gameId}
-Status: TRIAL EXPIRED
-
-Please contact admin.`,
-            {
-                chat_id: chatId,
-                message_id: loadingMsg.message_id
+                return;
             }
-        );
+        }
 
-        return;
-    }
-}
-
-// allowed == true ဖြစ်ရင် ဒီနေရာကနေ Login ဆက်သွားမယ်
+        // ------------------------
 
         userSession.loggedIn = true;
         userSession.step = "main";
@@ -1932,35 +1913,44 @@ Please contact admin.`,
 
         const maskedPhone = this.maskPhoneNumber(userSession.phone);
 
-        const successText = `Login Successful!
+        const successText =
+`Login Successful!
 
-Game ID: ${gameId}
-Account: ${maskedPhone}
-Balance: ${balance.toLocaleString()} K
-Game Type: ${gameType}
+Game ID : ${gameId}
+Account : ${maskedPhone}
+Balance : ${balance.toLocaleString()} K
+Game Type : ${gameType}
 
-Status: VERIFIED ✅`;
+Status : VERIFIED ✅`;
 
-        await this.bot.editMessageText(successText, {
-            chat_id: chatId,
-            message_id: loadingMsg.message_id
-        });
+        await this.bot.editMessageText(
+            successText,
+            {
+                chat_id: chatId,
+                message_id: loadingMsg.message_id
+            }
+        );
 
-        await this.bot.sendMessage(chatId, "Choose an option:", {
-            reply_markup: this.getMainKeyboard()
-        });
+        await this.bot.sendMessage(
+            chatId,
+            "Choose an option:",
+            {
+                reply_markup: this.getMainKeyboard()
+            }
+        );
 
     } catch (error) {
 
         console.error(error);
 
         await this.bot.editMessageText(
-            `Login error: ${error.message}`,
+            `Login Error!\n\n${error.message}`,
             {
                 chat_id: chatId,
                 message_id: loadingMsg.message_id
             }
         );
+
     }
 }
 
@@ -3998,23 +3988,48 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
     }
 
     async handleRemoveGameId(msg, match) {
-        const chatId = msg.chat.id;
-        const userId = String(chatId);
+    const chatId = msg.chat.id;
+    const userId = String(chatId);
 
-        if (userId !== ADMIN_USER_ID) {
-            await this.bot.sendMessage(chatId, "You are not authorized to use this command.");
-            return;
-        }
-
-        const gameId = match[1];
-        try {
-            await this.db.run('DELETE FROM allowed_game_ids WHERE game_id = ?', [gameId]);
-            await this.bot.sendMessage(chatId, ` Game ID '${gameId}' removed successfully!`);
-        } catch (error) {
-            console.error(` Error removing game ID ${gameId}:`, error);
-            await this.bot.sendMessage(chatId, " Failed to remove game ID.");
-        }
+    if (userId !== ADMIN_USER_ID) {
+        await this.bot.sendMessage(chatId, "You are not authorized to use this command.");
+        return;
     }
+
+    const gameId = match[1].trim();
+
+    try {
+
+        // Allow ID ဖျက်
+        await this.db.run(
+            'DELETE FROM allowed_game_ids WHERE game_id = ?',
+            [gameId]
+        );
+
+        // Trial လည်း ဖျက် (Expire ချက်ချင်းဖြစ်အောင်)
+        await this.db.run(
+    `UPDATE users
+     SET trial_expire = 1
+     WHERE game_id = ?`,
+    [gameId]
+);
+
+        await this.bot.sendMessage(
+            chatId,
+            `✅ Game ID ${gameId} removed.
+
+❌ Trial deleted.
+User must contact admin before logging in again.`
+        );
+
+    } catch (error) {
+        console.error(error);
+        await this.bot.sendMessage(
+            chatId,
+            "Failed to remove Game ID."
+        );
+    }
+}
 
     async handleListGameIds(msg) {
         const chatId = msg.chat.id;
