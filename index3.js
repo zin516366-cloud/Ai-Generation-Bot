@@ -2599,24 +2599,34 @@ Last update: ${getMyanmarTime()}`;
     }
 
     async runBot(chatId, userId) {
-        const trial = await this.db.get(
-    "SELECT trial_expire FROM users WHERE user_id=?",
-    [userId]
-);
+        const userSession = this.ensureUserSession(userId);
 
-if (!trial || Date.now() > trial.trial_expire) {
+const userInfo = await userSession.apiInstance.getUserInfo();
+const gameId = String(userInfo.userId).trim();
 
-    await this.bot.sendMessage(
-        chatId,
-        "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
+// Admin Allow စစ်
+const allowed = await this.isGameIdAllowed(gameId);
+
+if (!allowed) {
+
+    const trial = await this.db.get(
+        "SELECT trial_expire FROM users WHERE game_id=?",
+        [gameId]
     );
 
-    return;
+    if (!trial || Date.now() > trial.trial_expire) {
+
+        await this.bot.sendMessage(
+            chatId,
+            "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
+        );
+
+        return;
+    }
 }
         
         try {
-            const userSession = this.ensureUserSession(userId);
-
+            
             if (!userSession.loggedIn) {
                 await this.bot.sendMessage(chatId, "Please login to first!");
                 return;
