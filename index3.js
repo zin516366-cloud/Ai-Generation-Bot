@@ -1794,8 +1794,6 @@ Your credentials will be saved for feathuer use!`;
     );
 
     try {
-
-        // Login
         const result = await userSession.apiInstance.login(
             userSession.phone,
             userSession.password
@@ -1812,50 +1810,67 @@ Your credentials will be saved for feathuer use!`;
             return;
         }
 
-        // User Info
         const userInfo = await userSession.apiInstance.getUserInfo();
         const gameId = String(userInfo.userId || "").trim();
 
         const now = Date.now();
 
-        // User Record Create
-        await this.db.run(
-            `INSERT OR IGNORE INTO users
-            (user_id, phone, password, platform, game_id)
-            VALUES (?, ?, ?, ?, ?)`,
-            [
-                userId,
-                userSession.phone,
-                userSession.password,
-                userSession.platform,
-                gameId
-            ]
+        // ✅ Check if user already exists
+        const existingUser = await this.db.get(
+            "SELECT user_id, game_id, trial_start, trial_expire FROM users WHERE user_id = ?",
+            [userId]
         );
 
-        // ------------------------
-        // ADMIN ALLOW CHECK
-        // ------------------------
+        if (existingUser) {
+            // ✅ Update existing user
+            await this.db.run(
+                `UPDATE users 
+                 SET phone = ?, password = ?, platform = ?, game_id = ?
+                 WHERE user_id = ?`,
+                [
+                    userSession.phone,
+                    userSession.password,
+                    userSession.platform,
+                    gameId,
+                    userId
+                ]
+            );
+        } else {
+            // ✅ Insert new user
+            await this.db.run(
+                `INSERT INTO users
+                (user_id, phone, password, platform, game_id)
+                VALUES (?, ?, ?, ?, ?)`,
+                [
+                    userId,
+                    userSession.phone,
+                    userSession.password,
+                    userSession.platform,
+                    gameId
+                ]
+            );
+        }
 
         const allowed = await this.isGameIdAllowed(gameId);
 
         if (!allowed) {
-
             const trial = await this.db.get(
-                "SELECT trial_start,trial_expire FROM users WHERE game_id=?",
-                [gameId]
+                "SELECT trial_start, trial_expire FROM users WHERE game_id=? AND user_id=?",
+                [gameId, userId]
             );
 
-            if (!trial || trial.trial_start == 0) {
-
+            // ✅ Check if trial already exists and is still active
+            if (trial && trial.trial_start > 0 && trial.trial_expire > Date.now()) {
+                // ✅ Trial still active, continue
+                console.log(` User ${userId} has active trial until ${new Date(trial.trial_expire)}`);
+            } else if (!trial || trial.trial_start == 0 || trial.trial_start === null) {
+                // ✅ New trial only for NEW users or users who never had trial
                 await this.db.run(
                     `UPDATE users
-                    SET
-                    game_id=?,
-                    trial_start=?,
+                    SET trial_start=?,
                     trial_expire=?
                     WHERE user_id=?`,
                     [
-                        gameId,
                         now,
                         now + (24 * 60 * 60 * 1000),
                         userId
@@ -1866,9 +1881,19 @@ Your credentials will be saved for feathuer use!`;
                     chatId,
                     "🎁 New Game ID\n\n24 Hour Free Trial Activated!"
                 );
-
+                
+                // ✅ Notify admin about new user
+                await this.bot.sendMessage(
+                    ADMIN_USER_ID,
+                    `🆕 **NEW USER LOGIN**\n\n` +
+                    `User ID: ${userId}\n` +
+                    `Game ID: ${gameId}\n` +
+                    `Phone: ${this.maskPhoneNumber(userSession.phone)}\n` +
+                    `Trial: 24 Hours\n` +
+                    `Time: ${getMyanmarTime()}`
+                );
             } else if (now > trial.trial_expire) {
-
+                // ✅ Trial expired
                 await this.bot.editMessageText(
 `Login Failed!
 
@@ -1883,12 +1908,20 @@ Please contact admin
                         message_id: loadingMsg.message_id
                     }
                 );
-
                 return;
             }
+        } else {
+            // ✅ Allowed user - notify admin
+            await this.bot.sendMessage(
+                ADMIN_USER_ID,
+                `✅ **ALLOWED USER LOGIN**\n\n` +
+                `User ID: ${userId}\n` +
+                `Game ID: ${gameId}\n` +
+                `Phone: ${this.maskPhoneNumber(userSession.phone)}\n` +
+                `Status: PREMIUM\n` +
+                `Time: ${getMyanmarTime()}`
+            );
         }
-
-        // ------------------------
 
         userSession.loggedIn = true;
         userSession.step = "main";
@@ -1940,9 +1973,7 @@ Status : VERIFIED ✅`;
         );
 
     } catch (error) {
-
         console.error(error);
-
         await this.bot.editMessageText(
             `Login Error!\n\n${error.message}`,
             {
@@ -1950,7 +1981,6 @@ Status : VERIFIED ✅`;
                 message_id: loadingMsg.message_id
             }
         );
-
     }
 }
 
@@ -2604,40 +2634,39 @@ Last update: ${getMyanmarTime()}`;
     const userInfo = await userSession.apiInstance.getUserInfo();
     const gameId = String(userInfo.userId).trim();
 
-    // Admin Allow စစ်
+    // ✅ Admin Allow စစ်
     const allowed = await this.isGameIdAllowed(gameId);
 
     if (!allowed) {
         const trial = await this.db.get(
-            "SELECT trial_start, trial_expire FROM users WHERE game_id=?",
-            [gameId]
+            "SELECT trial_start, trial_expire FROM users WHERE game_id=? AND user_id=?",
+            [gameId, userId]
         );
 
-        // 👇 ဒီနေရာမှာ ပြင်ပါ
-        if (!trial || trial.trial_start == 0 || trial.trial_expire == 0) {
-            // Trial မရှိသေးရင် သက်တမ်းပေးမယ်
-            const now = Date.now();
-            await this.db.run(
-                `UPDATE users 
-                 SET trial_start = ?, trial_expire = ? 
-                 WHERE game_id = ?`,
-                [now, now + (24 * 60 * 60 * 1000), gameId]
-            );
-            
+        // ✅ Check if user has active trial
+        if (!trial || trial.trial_start == 0 || trial.trial_start === null) {
             await this.bot.sendMessage(
                 chatId,
-                "🎁 New Game ID\n\n24 Hour Free Trial Activated!"
+                "❌ You don't have an active trial.\n\nPlease contact admin to get access."
             );
+            return;
         } else if (Date.now() > trial.trial_expire) {
             await this.bot.sendMessage(
                 chatId,
                 "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
             );
             return;
+        } else {
+            // ✅ Trial is active, show remaining time
+            const remaining = Math.floor((trial.trial_expire - Date.now()) / (1000 * 60 * 60));
+            await this.bot.sendMessage(
+                chatId,
+                `✅ Trial Active\n\nRemaining Time: ${remaining} hours\n\nStarting bot...`
+            );
         }
     }
     
-    // ကျန်တဲ့ code တွေ ဆက်လုပ်ပါ
+    // ✅ ကျန်တဲ့ code တွေ ဆက်လုပ်ပါ
     try {
         if (!userSession.loggedIn) {
             await this.bot.sendMessage(chatId, "Please login to first!");
@@ -2711,26 +2740,27 @@ Last update: ${getMyanmarTime()}`;
     const maxFailures = 3;
 
     const bettingLoop = async () => {
-        // Trial Check - ဒီနေရာမှာလည်း ပြင်ပါ
+        // ✅ Trial Check
         const userInfo = await userSession.apiInstance.getUserInfo();
         const gameId = String(userInfo.userId).trim();
         const allowed = await this.isGameIdAllowed(gameId);
         
         if (!allowed) {
             const trial = await this.db.get(
-                "SELECT trial_start, trial_expire FROM users WHERE game_id=?",
-                [gameId]
+                "SELECT trial_start, trial_expire FROM users WHERE game_id=? AND user_id=?",
+                [gameId, userId]
             );
 
-            // 👇 ဒီနေရာမှာလည်း ပြင်ပါ
-            if (!trial || trial.trial_start == 0 || trial.trial_expire == 0) {
-                const now = Date.now();
-                await this.db.run(
-                    `UPDATE users 
-                     SET trial_start = ?, trial_expire = ? 
-                     WHERE game_id = ?`,
-                    [now, now + (24 * 60 * 60 * 1000), gameId]
+            // ✅ Check trial status
+            if (!trial || trial.trial_start == 0 || trial.trial_start === null) {
+                await this.bot.sendMessage(
+                    userId,
+                    "❌ No active trial found.\n\nBot stopped automatically."
                 );
+                delete autoBettingTasks[userId];
+                delete waitingForResults[userId];
+                await this.saveBotSession(userId, false);
+                return;
             } else if (Date.now() > trial.trial_expire) {
                 await this.bot.sendMessage(
                     userId,
@@ -2741,15 +2771,73 @@ Last update: ${getMyanmarTime()}`;
                 await this.saveBotSession(userId, false);
                 return;
             }
-        }
-
-        // ကျန်တဲ့ code တွေ ဆက်လုပ်ပါ
         if (!autoBettingTasks[userId]) {
             console.log(` Auto betting stopped for user ${userId}`);
             return;
         }
 
-        // ... ကျန်တဲ့ code တွေ ...
+        try {
+            if (waitingForResults[userId]) {
+                console.log(` User ${userId} waiting for results, checking again in 3 seconds`);
+                setTimeout(bettingLoop, 3000);
+                return;
+            }
+
+            const currentIssue = await userSession.apiInstance.getCurrentIssue();
+            console.log(` Current issue for user ${userId}: ${currentIssue}, last issue: ${lastIssue}`);
+
+            if (currentIssue && currentIssue !== lastIssue) {
+                console.log(` New issue detected: ${currentIssue} for user ${userId}`);
+
+                let delay;
+                if (userSession.gameType === 'WINGO_30S') {
+                    delay = 2000;
+                } else if (userSession.gameType === 'TRX_1MIN') {
+                    delay = 5000; // 1 minute TRX delay
+                } else if (userSession.gameType === 'WINGO_1MIN') {
+                    delay = 5000; // 1 minute WINGO delay
+                } else {
+                    delay = 3000;
+                }
+
+                setTimeout(async () => {
+                    try {
+                        if (!autoBettingTasks[userId]) return;
+
+                        if (!(await this.hasUserBetOnIssue(userId, userSession.platform, currentIssue))) {
+                            console.log(` Placing bet for user ${userId} on issue ${currentIssue}`);
+                            await this.placeAutoBet(userId, currentIssue);
+                            lastIssue = currentIssue;
+                            consecutiveFailures = 0;
+                        } else {
+                            console.log(` User ${userId} already bet on issue ${currentIssue}`);
+                        }
+
+                        setTimeout(bettingLoop, 2000);
+                    } catch (error) {
+                        console.error(` Error in betting timeout for user ${userId}:`, error);
+                        setTimeout(bettingLoop, 5000);
+                    }
+                }, delay);
+            } else {
+                console.log(` Same issue or no issue for user ${userId}, checking again in 3 seconds`);
+                setTimeout(bettingLoop, 3000);
+            }
+        } catch (error) {
+            console.error(` Auto betting error for user ${userId}:`, error);
+            consecutiveFailures++;
+
+            if (consecutiveFailures >= maxFailures) {
+                console.log(` Too many errors, stopping bot for user ${userId}`);
+                this.bot.sendMessage(userId, " Auto Bot Stopped - Too many errors!").catch(console.error);
+                delete autoBettingTasks[userId];
+                delete waitingForResults[userId];
+                this.saveBotSession(userId, false);
+            } else {
+                console.log(` Retrying after error for user ${userId} (${consecutiveFailures}/${maxFailures})`);
+                setTimeout(bettingLoop, 5000);
+            }
+        }
     };
 
     console.log(` Starting auto betting loop for user ${userId}`);
@@ -3951,7 +4039,7 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
                 [gameId]
             );
             
-            // 👇 ဒီနေရာမှာ အသစ်ထည့်ပါ - allowed ထဲထည့်ရင် trial ကို ဖျက်ပစ်မယ်
+            // ✅ Add to allowed list - set trial to 0 (no trial needed)
             await this.db.run(
                 `UPDATE users
                  SET trial_start = 0, trial_expire = 0
@@ -3980,24 +4068,41 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
     const gameId = match[1].trim();
 
     try {
-        // Allow ID ဖျက်
+        // ✅ Check if game_id exists in users
+        const user = await this.db.get(
+            "SELECT user_id FROM users WHERE game_id = ?",
+            [gameId]
+        );
+
+        // ✅ Allow ID ဖျက်
         await this.db.run(
             'DELETE FROM allowed_game_ids WHERE game_id = ?',
             [gameId]
         );
 
-        // 👇 ဒီနေရာကို ပြင်ပါ - trial_expire ကို 0 ထားလိုက်ပါ
-        await this.db.run(
-            `UPDATE users
-             SET trial_start = 0, trial_expire = 0
-             WHERE game_id = ?`,
-            [gameId]
-        );
-
-        await this.bot.sendMessage(
-            chatId,
-            `✅ Game ID ${gameId} removed.\n\nUser can get new 24-hour trial by logging in again.`
-        );
+        if (user) {
+            // ✅ Remove trial completely (set to 0) so user cannot get new trial
+            await this.db.run(
+                `UPDATE users
+                 SET trial_start = 0, trial_expire = 0
+                 WHERE game_id = ?`,
+                [gameId]
+            );
+            
+            await this.bot.sendMessage(
+                chatId,
+                `✅ Game ID ${gameId} removed from allowed list.\n\n` +
+                `User ${user.user_id} trial has been REMOVED.\n` +
+                `This user CANNOT get new trial.\n` +
+                `They must be added to allowed list again to use the bot.`
+            );
+        } else {
+            await this.bot.sendMessage(
+                chatId,
+                `✅ Game ID ${gameId} removed from allowed list.\n\n` +
+                `No user found with this Game ID.`
+            );
+        }
 
     } catch (error) {
         console.error(error);
@@ -4009,66 +4114,195 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
 }
 
     async handleListGameIds(msg) {
-        const chatId = msg.chat.id;
-        const userId = String(chatId);
+    const chatId = msg.chat.id;
+    const userId = String(chatId);
 
-        if (userId !== ADMIN_USER_ID) {
-            await this.bot.sendMessage(chatId, "You are not authorized to use this command.");
+    if (userId !== ADMIN_USER_ID) {
+        await this.bot.sendMessage(chatId, "You are not authorized to use this command.");
+        return;
+    }
+
+    try {
+        // ✅ Get all users with their game IDs and trial info
+        const users = await this.db.all(`
+            SELECT 
+                u.user_id,
+                u.game_id,
+                u.trial_start,
+                u.trial_expire,
+                u.created_at,
+                u.phone,
+                CASE 
+                    WHEN a.game_id IS NOT NULL THEN 'PREMIUM'
+                    WHEN u.trial_start > 0 AND u.trial_expire > strftime('%s', 'now') * 1000 THEN 'TRIAL'
+                    WHEN u.trial_start > 0 AND u.trial_expire <= strftime('%s', 'now') * 1000 THEN 'EXPIRED'
+                    ELSE 'PENDING'
+                END as status
+            FROM users u
+            LEFT JOIN allowed_game_ids a ON u.game_id = a.game_id
+            ORDER BY u.created_at DESC
+        `);
+
+        if (users.length === 0) {
+            await this.bot.sendMessage(chatId, "No users found.");
             return;
         }
 
-        try {
-            const gameIds = await this.getAllowedGameIds();
-            if (gameIds.length === 0) {
-                await this.bot.sendMessage(chatId, "No game IDs found for .");
-                return;
+        let gameIdsText = "📊 **USER & GAME ID LIST**\n\n";
+        let premiumCount = 0;
+        let trialCount = 0;
+        let expiredCount = 0;
+        let pendingCount = 0;
+
+        users.forEach((user, i) => {
+            const statusEmoji = user.status === 'PREMIUM' ? '⭐' :
+                               user.status === 'TRIAL' ? '🟢' :
+                               user.status === 'EXPIRED' ? '🔴' : '⚪';
+            
+            const phoneMasked = user.phone ? this.maskPhoneNumber(user.phone) : 'N/A';
+            
+            let trialInfo = '';
+            if (user.status === 'TRIAL') {
+                const remaining = Math.floor((user.trial_expire - Date.now()) / (1000 * 60 * 60));
+                trialInfo = ` (${remaining}h left)`;
+            } else if (user.status === 'EXPIRED') {
+                trialInfo = ' (Expired)';
             }
 
-            let gameIdsText = " Allowed Game IDs:\n\n";
-            gameIds.forEach((gameId, i) => {
-                gameIdsText += `${i+1}. ${gameId}\n`;
-            });
+            gameIdsText += `${i+1}. ${statusEmoji} **${user.game_id || 'N/A'}**\n`;
+            gameIdsText += `   👤 User: ${user.user_id}\n`;
+            gameIdsText += `   📱 Phone: ${phoneMasked}\n`;
+            gameIdsText += `   📊 Status: ${user.status}${trialInfo}\n`;
+            gameIdsText += `   📅 Added: ${user.created_at || 'N/A'}\n\n`;
 
-            gameIdsText += `\nTotal: ${gameIds.length} game IDs\n`;
-            await this.bot.sendMessage(chatId, gameIdsText);
-        } catch (error) {
-            console.error(` Error listing game IDs:`, error);
-            await this.bot.sendMessage(chatId, " Error getting game IDs.");
+            if (user.status === 'PREMIUM') premiumCount++;
+            else if (user.status === 'TRIAL') trialCount++;
+            else if (user.status === 'EXPIRED') expiredCount++;
+            else pendingCount++;
+        });
+
+        gameIdsText += `📊 **SUMMARY**\n`;
+        gameIdsText += `⭐ Premium: ${premiumCount}\n`;
+        gameIdsText += `🟢 Trial Active: ${trialCount}\n`;
+        gameIdsText += `🔴 Trial Expired: ${expiredCount}\n`;
+        gameIdsText += `⚪ Pending: ${pendingCount}\n`;
+        gameIdsText += `📊 Total: ${users.length}\n\n`;
+        gameIdsText += `🕐 Last Updated: ${getMyanmarTime()}`;
+
+        // ✅ Split if message is too long
+        if (gameIdsText.length > 4000) {
+            const chunks = this.splitMessage(gameIdsText, 4000);
+            for (const chunk of chunks) {
+                await this.bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+            }
+        } else {
+            await this.bot.sendMessage(chatId, gameIdsText, { parse_mode: 'Markdown' });
         }
+
+    } catch (error) {
+        console.error(` Error listing game IDs:`, error);
+        await this.bot.sendMessage(chatId, " Error getting game IDs.");
     }
+}
+
+// ✅ Helper function to split long messages
+splitMessage(text, maxLength = 4000) {
+    const chunks = [];
+    let currentChunk = '';
+    
+    const lines = text.split('\n');
+    for (const line of lines) {
+        if (currentChunk.length + line.length + 1 > maxLength) {
+            chunks.push(currentChunk);
+            currentChunk = '';
+        }
+        currentChunk += line + '\n';
+    }
+    
+    if (currentChunk) {
+        chunks.push(currentChunk);
+    }
+    
+    return chunks;
+}
 
     async handleGameIdStats(msg) {
-        const chatId = msg.chat.id;
-        const userId = String(chatId);
+    const chatId = msg.chat.id;
+    const userId = String(chatId);
 
-        if (userId !== ADMIN_USER_ID) {
-            await this.bot.sendMessage(chatId, "You are not authorized to use this command.");
-            return;
-        }
-
-        try {
-            const gameIds = await this.getAllowedGameIds();
-            const totalIds = gameIds.length;
-
-            let statsText = ` Game ID Statistics\n\nTotal Allowed Game IDs: ${totalIds}\n\nRecent Game IDs:\n`;
-
-            const recentIds = gameIds.slice(0, 10);
-            recentIds.forEach((gameId, i) => {
-                statsText += `${i+1}. ${gameId}\n`;
-            });
-
-            if (totalIds > 10) {
-                statsText += `\n... and ${totalIds - 10} more`;
-            }
-
-            statsText += `\n\nLast Updated: ${getMyanmarTime()}`;
-
-            await this.bot.sendMessage(chatId, statsText);
-        } catch (error) {
-            console.error(` Error getting game ID stats:`, error);
-            await this.bot.sendMessage(chatId, " Error getting game ID statistics.");
-        }
+    if (userId !== ADMIN_USER_ID) {
+        await this.bot.sendMessage(chatId, "You are not authorized to use this command.");
+        return;
     }
+
+    try {
+        // ✅ Get detailed statistics
+        const totalUsers = await this.db.get('SELECT COUNT(*) as count FROM users');
+        const premiumUsers = await this.db.get(`
+            SELECT COUNT(DISTINCT u.user_id) as count 
+            FROM users u 
+            INNER JOIN allowed_game_ids a ON u.game_id = a.game_id
+        `);
+        const trialUsers = await this.db.get(`
+            SELECT COUNT(*) as count 
+            FROM users 
+            WHERE trial_start > 0 
+            AND trial_expire > strftime('%s', 'now') * 1000
+        `);
+        const expiredUsers = await this.db.get(`
+            SELECT COUNT(*) as count 
+            FROM users 
+            WHERE trial_start > 0 
+            AND trial_expire <= strftime('%s', 'now') * 1000
+        `);
+        const pendingUsers = await this.db.get(`
+            SELECT COUNT(*) as count 
+            FROM users 
+            WHERE (trial_start = 0 OR trial_start IS NULL)
+            AND game_id NOT IN (SELECT game_id FROM allowed_game_ids)
+        `);
+
+        const gameIds = await this.getAllowedGameIds();
+        const totalIds = gameIds.length;
+
+        let statsText = `📊 **GAME ID STATISTICS**\n\n`;
+        statsText += `📋 **Allowed Game IDs**\n`;
+        statsText += `└─ Total: ${totalIds}\n\n`;
+        
+        statsText += `👥 **User Statistics**\n`;
+        statsText += `├─ Total Users: ${totalUsers.count || 0}\n`;
+        statsText += `├─ ⭐ Premium: ${premiumUsers.count || 0}\n`;
+        statsText += `├─ 🟢 Trial Active: ${trialUsers.count || 0}\n`;
+        statsText += `├─ 🔴 Trial Expired: ${expiredUsers.count || 0}\n`;
+        statsText += `└─ ⚪ Pending: ${pendingUsers.count || 0}\n\n`;
+
+        // ✅ Show recent new users
+        const recentUsers = await this.db.all(`
+            SELECT user_id, game_id, trial_start, trial_expire, created_at
+            FROM users 
+            ORDER BY created_at DESC 
+            LIMIT 5
+        `);
+
+        if (recentUsers.length > 0) {
+            statsText += `🆕 **Recent Users**\n`;
+            recentUsers.forEach((user, i) => {
+                const isPremium = gameIds.includes(user.game_id);
+                const status = isPremium ? '⭐ PREMIUM' : 
+                              (user.trial_start > 0 && user.trial_expire > Date.now()) ? '🟢 TRIAL' : '🔴 EXPIRED';
+                statsText += `${i+1}. ${user.game_id || 'N/A'} - ${status}\n`;
+            });
+        }
+
+        statsText += `\n🕐 Last Updated: ${getMyanmarTime()}`;
+
+        await this.bot.sendMessage(chatId, statsText, { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error(` Error getting game ID stats:`, error);
+        await this.bot.sendMessage(chatId, " Error getting game ID statistics.");
+    }
+}
 
     async handleBroadcastMessage(msg, match) {
         const chatId = msg.chat.id;
