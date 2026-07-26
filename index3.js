@@ -1815,14 +1815,13 @@ Your credentials will be saved for feathuer use!`;
 
         const now = Date.now();
 
-        // ✅ Check if user already exists
+        // ✅ Save user credentials first
         const existingUser = await this.db.get(
             "SELECT user_id, game_id, trial_start, trial_expire FROM users WHERE user_id = ?",
             [userId]
         );
 
         if (existingUser) {
-            // ✅ Update existing user
             await this.db.run(
                 `UPDATE users 
                  SET phone = ?, password = ?, platform = ?, game_id = ?
@@ -1836,7 +1835,6 @@ Your credentials will be saved for feathuer use!`;
                 ]
             );
         } else {
-            // ✅ Insert new user
             await this.db.run(
                 `INSERT INTO users
                 (user_id, phone, password, platform, game_id)
@@ -1851,25 +1849,88 @@ Your credentials will be saved for feathuer use!`;
             );
         }
 
-        const allowed = await this.isGameIdAllowed(gameId);
+        // ✅ STEP 1: Check if Game ID is PREMIUM (Allowed)
+        const isPremium = await this.isGameIdAllowed(gameId);
 
-        if (!allowed) {
-            const trial = await this.db.get(
-                "SELECT trial_start, trial_expire FROM users WHERE game_id=? AND user_id=?",
-                [gameId, userId]
+        if (isPremium) {
+            // ✅ PREMIUM USER - No trial needed
+            await this.db.run(
+                `UPDATE users
+                 SET trial_start = 0, trial_expire = 0
+                 WHERE user_id = ?`,
+                [userId]
             );
 
-            // ✅ Check if trial already exists and is still active
-            if (trial && trial.trial_start > 0 && trial.trial_expire > Date.now()) {
-                // ✅ Trial still active, continue
-                console.log(` User ${userId} has active trial until ${new Date(trial.trial_expire)}`);
-            } else if (!trial || trial.trial_start == 0 || trial.trial_start === null) {
-                // ✅ New trial only for NEW users or users who never had trial
+            await this.bot.sendMessage(
+                ADMIN_USER_ID,
+                `⭐ **PREMIUM USER LOGIN**\n\n` +
+                `User ID: ${userId}\n` +
+                `Game ID: ${gameId}\n` +
+                `Phone: ${this.maskPhoneNumber(userSession.phone)}\n` +
+                `Status: PREMIUM ✅\n` +
+                `Time: ${getMyanmarTime()}`
+            );
+
+            // ✅ Continue to login success
+        } else {
+            // ✅ STEP 2: Check if Game ID already has trial
+            const gameTrial = await this.db.get(
+                "SELECT user_id, trial_start, trial_expire FROM users WHERE game_id = ?",
+                [gameId]
+            );
+
+            if (gameTrial && gameTrial.trial_start > 0) {
+                // Game ID အတွက် trial ရှိပြီးသား
+                if (Date.now() < gameTrial.trial_expire) {
+                    // Trial still active
+                    if (gameTrial.user_id == userId) {
+                        // Same user - trial is active
+                        console.log(` User ${userId} has active trial for game ${gameId}`);
+                    } else {
+                        // Different user trying to use same Game ID with active trial
+                        await this.bot.editMessageText(
+`Login Failed!
+
+Game ID : ${gameId}
+
+Status : ALREADY REGISTERED
+
+This Game ID already has an active trial with another user.
+Please contact admin for assistance.
+@trilionx2`,
+                            {
+                                chat_id: chatId,
+                                message_id: loadingMsg.message_id
+                            }
+                        );
+                        return;
+                    }
+                } else {
+                    // Trial expired
+                    await this.bot.editMessageText(
+`Login Failed!
+
+Game ID : ${gameId}
+
+Status : TRIAL EXPIRED
+
+This Game ID's 24-hour trial has already expired.
+Please contact admin to get premium access.
+@trilionx2`,
+                        {
+                            chat_id: chatId,
+                            message_id: loadingMsg.message_id
+                        }
+                    );
+                    return;
+                }
+            } else {
+                // ✅ STEP 3: New Game ID - Give 24-hour trial
                 await this.db.run(
                     `UPDATE users
-                    SET trial_start=?,
-                    trial_expire=?
-                    WHERE user_id=?`,
+                    SET trial_start = ?,
+                    trial_expire = ?
+                    WHERE user_id = ?`,
                     [
                         now,
                         now + (24 * 60 * 60 * 1000),
@@ -1881,8 +1942,7 @@ Your credentials will be saved for feathuer use!`;
                     chatId,
                     "🎁 New Game ID\n\n24 Hour Free Trial Activated!"
                 );
-                
-                // ✅ Notify admin about new user
+
                 await this.bot.sendMessage(
                     ADMIN_USER_ID,
                     `🆕 **NEW USER LOGIN**\n\n` +
@@ -1892,35 +1952,7 @@ Your credentials will be saved for feathuer use!`;
                     `Trial: 24 Hours\n` +
                     `Time: ${getMyanmarTime()}`
                 );
-            } else if (now > trial.trial_expire) {
-                // ✅ Trial expired
-                await this.bot.editMessageText(
-`Login Failed!
-
-Game ID : ${gameId}
-
-Status : TRIAL EXPIRED
-
-Please contact admin
-@trilionx2`,
-                    {
-                        chat_id: chatId,
-                        message_id: loadingMsg.message_id
-                    }
-                );
-                return;
             }
-        } else {
-            // ✅ Allowed user - notify admin
-            await this.bot.sendMessage(
-                ADMIN_USER_ID,
-                `✅ **ALLOWED USER LOGIN**\n\n` +
-                `User ID: ${userId}\n` +
-                `Game ID: ${gameId}\n` +
-                `Phone: ${this.maskPhoneNumber(userSession.phone)}\n` +
-                `Status: PREMIUM\n` +
-                `Time: ${getMyanmarTime()}`
-            );
         }
 
         userSession.loggedIn = true;
@@ -1929,20 +1961,8 @@ Please contact admin
         const balance = await userSession.apiInstance.getBalance();
         const gameType = userSession.gameType || "WINGO";
 
-        await this.saveUserCredentials(
-            userId,
-            userSession.phone,
-            userSession.password,
-            userSession.platform,
-            gameId
-        );
-
         await this.saveUserSetting(userId, "auto_login", 1);
         await this.saveUserSetting(userId, "game_type", gameType);
-
-        if (gameType.includes("WINGO") || !gameType.includes("TRX")) {
-            await this.saveUserSetting(userId, "bet_amount", 100);
-        }
 
         const maskedPhone = this.maskPhoneNumber(userSession.phone);
 
@@ -1954,7 +1974,7 @@ Account : ${maskedPhone}
 Balance : ${balance.toLocaleString()} K
 Game Type : ${gameType}
 
-Status : VERIFIED ✅`;
+Status : ${isPremium ? '⭐ PREMIUM' : 'VERIFIED ✅'}`;
 
         await this.bot.editMessageText(
             successText,
@@ -2634,42 +2654,47 @@ Last update: ${getMyanmarTime()}`;
     const userInfo = await userSession.apiInstance.getUserInfo();
     const gameId = String(userInfo.userId).trim();
 
-    // ✅ Admin Allow စစ်
-    const allowed = await this.isGameIdAllowed(gameId);
+    // ✅ Check if PREMIUM (Allowed)
+    const isPremium = await this.isGameIdAllowed(gameId);
 
-    if (!allowed) {
+    if (isPremium) {
+        // ✅ Premium - No trial check needed
+        console.log(` User ${userId} is PREMIUM, starting bot...`);
+    } else {
+        // ✅ Check trial
         const trial = await this.db.get(
-            "SELECT trial_start, trial_expire FROM users WHERE game_id=? AND user_id=?",
-            [gameId, userId]
+            "SELECT trial_start, trial_expire FROM users WHERE user_id = ?",
+            [userId]
         );
 
-        // ✅ Check if user has active trial
-        if (!trial || trial.trial_start == 0 || trial.trial_start === null) {
+        if (!trial || trial.trial_start == 0) {
             await this.bot.sendMessage(
                 chatId,
-                "❌ You don't have an active trial.\n\nPlease contact admin to get access."
+                "❌ No active trial found.\n\nPlease contact admin for access."
             );
             return;
-        } else if (Date.now() > trial.trial_expire) {
-            await this.bot.sendMessage(
-                chatId,
-                "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
-            );
-            return;
-        } else {
-            // ✅ Trial is active, show remaining time
-            const remaining = Math.floor((trial.trial_expire - Date.now()) / (1000 * 60 * 60));
-            await this.bot.sendMessage(
-                chatId,
-                `✅ Trial Active\n\nRemaining Time: ${remaining} hours\n\nStarting bot...`
-            );
         }
+
+        if (Date.now() > trial.trial_expire) {
+            await this.bot.sendMessage(
+                chatId,
+                "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin to get premium access."
+            );
+            return;
+        }
+
+        // ✅ Trial active - show remaining time
+        const remaining = Math.floor((trial.trial_expire - Date.now()) / (1000 * 60 * 60));
+        await this.bot.sendMessage(
+            chatId,
+            `✅ Trial Active\n\nRemaining Time: ${remaining} hours\n\nStarting bot...`
+        );
     }
-    
-    // ✅ ကျန်တဲ့ code တွေ ဆက်လုပ်ပါ
+
+    // ✅ Start bot
     try {
         if (!userSession.loggedIn) {
-            await this.bot.sendMessage(chatId, "Please login to first!");
+            await this.bot.sendMessage(chatId, "Please login first!");
             return;
         }
 
@@ -2717,7 +2742,8 @@ Last update: ${getMyanmarTime()}`;
             }
         }
 
-        const startMessage = ` Auto Bot Started!\n\nGame Type: ${userSession.gameType || 'WINGO'}\nMode: ${modeText}`;
+        const status = isPremium ? '⭐ PREMIUM' : '🟢 TRIAL';
+        const startMessage = ` Auto Bot Started!\n\nGame Type: ${userSession.gameType || 'WINGO'}\nMode: ${modeText}\nStatus: ${status}`;
         await this.bot.sendMessage(chatId, startMessage);
 
         this.startAutoBetting(userId);
@@ -2740,19 +2766,18 @@ Last update: ${getMyanmarTime()}`;
     const maxFailures = 3;
 
     const bettingLoop = async () => {
-        // ✅ Trial Check
+        // ✅ Check Premium or Trial
         const userInfo = await userSession.apiInstance.getUserInfo();
         const gameId = String(userInfo.userId).trim();
-        const allowed = await this.isGameIdAllowed(gameId);
-        
-        if (!allowed) {
+        const isPremium = await this.isGameIdAllowed(gameId);
+
+        if (!isPremium) {
             const trial = await this.db.get(
-                "SELECT trial_start, trial_expire FROM users WHERE game_id=? AND user_id=?",
-                [gameId, userId]
+                "SELECT trial_start, trial_expire FROM users WHERE user_id = ?",
+                [userId]
             );
 
-            // ✅ Check trial status
-            if (!trial || trial.trial_start == 0 || trial.trial_start === null) {
+            if (!trial || trial.trial_start == 0) {
                 await this.bot.sendMessage(
                     userId,
                     "❌ No active trial found.\n\nBot stopped automatically."
@@ -2761,7 +2786,9 @@ Last update: ${getMyanmarTime()}`;
                 delete waitingForResults[userId];
                 await this.saveBotSession(userId, false);
                 return;
-            } else if (Date.now() > trial.trial_expire) {
+            }
+
+            if (Date.now() > trial.trial_expire) {
                 await this.bot.sendMessage(
                     userId,
                     "❌ Your 24 Hour Free Trial has expired.\n\nBot stopped automatically."
@@ -2771,15 +2798,15 @@ Last update: ${getMyanmarTime()}`;
                 await this.saveBotSession(userId, false);
                 return;
             }
+        }
+
         if (!autoBettingTasks[userId]) {
             console.log(` Auto betting stopped for user ${userId}`);
             return;
         }
-    }
 
         try {
             if (waitingForResults[userId]) {
-                console.log(` User ${userId} waiting for results, checking again in 3 seconds`);
                 setTimeout(bettingLoop, 3000);
                 return;
             }
@@ -2794,9 +2821,9 @@ Last update: ${getMyanmarTime()}`;
                 if (userSession.gameType === 'WINGO_30S') {
                     delay = 2000;
                 } else if (userSession.gameType === 'TRX_1MIN') {
-                    delay = 5000; // 1 minute TRX delay
+                    delay = 5000;
                 } else if (userSession.gameType === 'WINGO_1MIN') {
-                    delay = 5000; // 1 minute WINGO delay
+                    delay = 5000;
                 } else {
                     delay = 3000;
                 }
