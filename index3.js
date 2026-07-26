@@ -56,40 +56,36 @@ class Database {
     }
 
     initDatabase() {
-    const tables = [
-        `CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    phone TEXT,
-    password TEXT,
-    platform TEXT DEFAULT '6LOTTERY',
-
-    game_id TEXT,
-
-    trial_start INTEGER DEFAULT 0,
-    trial_expire INTEGER DEFAULT 0,
-
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)`,
-        `CREATE TABLE IF NOT EXISTS user_settings (
-            user_id INTEGER PRIMARY KEY,
-            bet_amount INTEGER DEFAULT 100,
-            auto_login BOOLEAN DEFAULT 1,
-            bet_sequence TEXT DEFAULT '100,300,700,1600,3200,7600,16000,32000',
-            current_bet_index INTEGER DEFAULT 0,
-            platform TEXT DEFAULT '6LOTTERY',
-            auto_betting BOOLEAN DEFAULT 0,
-            random_betting TEXT DEFAULT 'bot',
-            profit_target INTEGER DEFAULT 0,
-            loss_target INTEGER DEFAULT 0,
-            game_type TEXT DEFAULT 'WINGO_1MIN',
-            crease_mode TEXT DEFAULT 'none',
-            follow_inverse BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )`,
+        // ✅ Create all tables with all columns at once
+        const tables = [
+            `CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                phone TEXT,
+                password TEXT,
+                platform TEXT DEFAULT '6LOTTERY',
+                game_id TEXT,
+                trial_start INTEGER DEFAULT 0,
+                trial_expire INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER PRIMARY KEY,
+                bet_amount INTEGER DEFAULT 100,
+                auto_login BOOLEAN DEFAULT 1,
+                bet_sequence TEXT DEFAULT '100,300,700,1600,3200,7600,16000,32000',
+                current_bet_index INTEGER DEFAULT 0,
+                platform TEXT DEFAULT '6LOTTERY',
+                auto_betting BOOLEAN DEFAULT 0,
+                random_betting TEXT DEFAULT 'bot',
+                profit_target INTEGER DEFAULT 0,
+                loss_target INTEGER DEFAULT 0,
+                game_type TEXT DEFAULT 'WINGO_1MIN',
+                crease_mode TEXT DEFAULT 'none',
+                follow_inverse BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
             `CREATE TABLE IF NOT EXISTS allowed_game_ids (
                 game_id TEXT PRIMARY KEY,
-                trial_start INTEGER,
-trial_expire INTEGER
                 added_by INTEGER,
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
@@ -134,89 +130,50 @@ trial_expire INTEGER
             )`
         ];
 
-        tables.forEach(table => {
-        this.db.run(table, (err) => {
-            if (err) {
-                console.error('Error creating table:', err);
-            }
-        });
-    });
-
-    // Existing table ကို check လုပ်ပြီး missing column ကို ထည့်သွင်းပါ
-    this.addMissingColumns();
-}
-
-addMissingColumns() {
-    const columnsToAdd = [
-    { table: 'user_settings', column: 'crease_mode', type: 'TEXT DEFAULT "none"' },
-    { table: 'user_settings', column: 'follow_inverse', type: 'BOOLEAN DEFAULT 0' },
-
-    { table: 'users', column: 'game_id', type: 'TEXT' },
-    { table: 'users', column: 'trial_start', type: 'INTEGER DEFAULT 0' },
-    { table: 'users', column: 'trial_expire', type: 'INTEGER DEFAULT 0' }
-];
-
-    columnsToAdd.forEach((col) => {
-        try {
-            const checkSql = `PRAGMA table_info(${col.table})`;
-            this.db.all(checkSql, (err, rows) => {
+        let completed = 0;
+        tables.forEach((table, index) => {
+            this.db.run(table, (err) => {
                 if (err) {
-                    console.error(`Error checking columns for ${col.table}:`, err);
-                    return;
-                }
-                
-                const columns = rows.map(row => row.name);
-                // ✅ ဒီမှာ column ရှိပြီးသားလား စစ်ပါ
-                if (!columns.includes(col.column)) {
-                    const alterSql = `ALTER TABLE ${col.table} ADD COLUMN ${col.column} ${col.type}`;
-                    this.db.run(alterSql, (alterErr) => {
-                        if (alterErr) {
-                            // ❌ duplicate column error ကို ignore လုပ်ပါ
-                            if (alterErr.message && alterErr.message.includes('duplicate column name')) {
-                                console.log(`Column ${col.column} already exists in ${col.table}, skipping...`);
-                            } else {
-                                console.error(`Error adding column ${col.column} to ${col.table}:`, alterErr);
-                            }
-                        } else {
-                            console.log(`✅ Added column ${col.column} to ${col.table}`);
-                        }
-                    });
+                    console.error('Error creating table:', err);
                 } else {
-                    console.log(`✅ Column ${col.column} already exists in ${col.table}, skipping...`);
+                    console.log(`✅ Table ${index + 1}/${tables.length} created`);
+                }
+                completed++;
+                // ✅ When all tables are created, check for missing columns
+                if (completed === tables.length) {
+                    console.log('✅ All tables created successfully');
+                    // No need to add missing columns since all columns are already in CREATE TABLE
                 }
             });
-        } catch (error) {
-            console.error(`Error checking/adding column ${col.column} to ${col.table}:`, error);
-        }
-    });
-}
-
-run(sql, params = []) {
-    return new Promise((resolve, reject) => {
-        this.db.run(sql, params, function(err) {
-            if (err) reject(err);
-            else resolve({ id: this.lastID, changes: this.changes });
         });
-    });
-}
+    }
 
-get(sql, params = []) {
-    return new Promise((resolve, reject) => {
-        this.db.get(sql, params, (err, row) => {
-            if (err) reject(err);
-            else resolve(row);
+    run(sql, params = []) {
+        return new Promise((resolve, reject) => {
+            this.db.run(sql, params, function(err) {
+                if (err) reject(err);
+                else resolve({ id: this.lastID, changes: this.changes });
+            });
         });
-    });
-}
+    }
 
-all(sql, params = []) {
-    return new Promise((resolve, reject) => {
-        this.db.all(sql, params, (err, rows) => {
-            if (err) reject(err);
-            else resolve(rows);
+    get(sql, params = []) {
+        return new Promise((resolve, reject) => {
+            this.db.get(sql, params, (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
         });
-    });
-}
+    }
+
+    all(sql, params = []) {
+        return new Promise((resolve, reject) => {
+            this.db.all(sql, params, (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+    }
 }
 
 class LotteryAPI {
