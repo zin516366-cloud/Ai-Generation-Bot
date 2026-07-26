@@ -2610,22 +2610,17 @@ Last update: ${getMyanmarTime()}`;
         }
 
         const userInfo = await userSession.apiInstance.getUserInfo();
-const gameId = String(userInfo.userId).trim();
+        const gameId = String(userInfo.userId).trim();
 
-console.log("Game ID =", gameId);
+        // Admin Allow ကို အရင်စစ်
+        const allowed = await this.isGameIdAllowed(gameId);
 
-const allowed = await this.isGameIdAllowed(gameId);
+        if (!allowed) {
 
-console.log("Allowed =", allowed);
-
-// Admin Allow စစ်
-if (!allowed) {
-
-    const trial = await this.db.get(
-        "SELECT trial_expire FROM users WHERE game_id=?",
-        [gameId]
-    );
-
+            const trial = await this.db.get(
+                "SELECT trial_expire FROM users WHERE game_id=?",
+                [gameId]
+            );
 
             if (!trial || Date.now() > trial.trial_expire) {
 
