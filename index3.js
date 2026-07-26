@@ -2599,40 +2599,31 @@ Last update: ${getMyanmarTime()}`;
     }
 
     async runBot(chatId, userId) {
-
-    try {
-
         const userSession = this.ensureUserSession(userId);
 
-        if (!userSession.loggedIn) {
-            await this.bot.sendMessage(chatId, "Please login first!");
-            return;
-        }
+const userInfo = await userSession.apiInstance.getUserInfo();
+const gameId = String(userInfo.userId).trim();
 
-        const userInfo = await userSession.apiInstance.getUserInfo();
-        const gameId = String(userInfo.userId).trim();
+// Admin Allow စစ်
+const allowed = await this.isGameIdAllowed(gameId);
 
-        // Admin Allow ကို အရင်စစ်
-        const allowed = await this.isGameIdAllowed(gameId);
+if (!allowed) {
 
-        if (!allowed) {
+    const trial = await this.db.get(
+        "SELECT trial_expire FROM users WHERE game_id=?",
+        [gameId]
+    );
 
-            const trial = await this.db.get(
-                "SELECT trial_expire FROM users WHERE game_id=?",
-                [gameId]
-            );
+    if (!trial || Date.now() > trial.trial_expire) {
 
-            if (!trial || Date.now() > trial.trial_expire) {
+        await this.bot.sendMessage(
+            chatId,
+            "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
+        );
 
-                await this.bot.sendMessage(
-                    chatId,
-                    "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
-                );
-
-                return;
-            }
-        }
-
+        return;
+    }
+}
         
         try {
             
