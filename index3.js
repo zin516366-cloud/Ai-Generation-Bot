@@ -2775,6 +2775,7 @@ Last update: ${getMyanmarTime()}`;
             console.log(` Auto betting stopped for user ${userId}`);
             return;
         }
+    }
 
         try {
             if (waitingForResults[userId]) {
