@@ -2626,6 +2626,7 @@ if (!allowed) {
         [gameId]
     );
 
+
             if (!trial || Date.now() > trial.trial_expire) {
 
                 await this.bot.sendMessage(
