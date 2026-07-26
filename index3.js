@@ -58,12 +58,16 @@ class Database {
     initDatabase() {
     const tables = [
         `CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            phone TEXT,
-            password TEXT,
-            platform TEXT DEFAULT '6LOTTERY',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )`,
+    user_id INTEGER PRIMARY KEY,
+    phone TEXT,
+    password TEXT,
+    platform TEXT DEFAULT '6LOTTERY',
+
+    trial_start INTEGER DEFAULT 0,
+    trial_expire INTEGER DEFAULT 0,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`,
         `CREATE TABLE IF NOT EXISTS user_settings (
             user_id INTEGER PRIMARY KEY,
             bet_amount INTEGER DEFAULT 100,
@@ -140,9 +144,12 @@ class Database {
 
 addMissingColumns() {
     const columnsToAdd = [
-        { table: 'user_settings', column: 'crease_mode', type: 'TEXT DEFAULT "none"' },
-        { table: 'user_settings', column: 'follow_inverse', type: 'BOOLEAN DEFAULT 0' }
-    ];
+    { table: 'user_settings', column: 'crease_mode', type: 'TEXT DEFAULT "none"' },
+    { table: 'user_settings', column: 'follow_inverse', type: 'BOOLEAN DEFAULT 0' },
+
+    { table: 'users', column: 'trial_start', type: 'INTEGER DEFAULT 0' },
+    { table: 'users', column: 'trial_expire', type: 'INTEGER DEFAULT 0' }
+];
 
     columnsToAdd.forEach((col) => {
         try {
@@ -1775,7 +1782,7 @@ Your credentials will be saved for feathuer use!`;
         return;
     }
 
-    const loadingMsg = await this.bot.sendMessage(chatId, `Logging into ... Please wait.`);
+    const loadingMsg = await this.bot.sendMessage(chatId, `Loading into ... Please wait.`);
 
     try {
         const result = await userSession.apiInstance.login(userSession.phone, userSession.password);
@@ -1793,6 +1800,45 @@ Your credentials will be saved for feathuer use!`;
             }
 
             userSession.loggedIn = true;
+
+// User record မရှိသေးရင် create
+await this.db.run(
+    `INSERT OR IGNORE INTO users(user_id, phone, password, platform)
+     VALUES(?,?,?,?)`,
+    [
+        userId,
+        userSession.phone,
+        userSession.password,
+        userSession.platform
+    ]
+);
+
+const trial = await this.db.get(
+    "SELECT trial_start, trial_expire FROM users WHERE user_id=?",
+    [userId]
+);
+
+const now = Date.now();
+
+if (!trial.trial_start) {
+
+    await this.db.run(
+        `UPDATE users
+         SET trial_start=?,
+             trial_expire=?
+         WHERE user_id=?`,
+        [
+            now,
+            now + 24 * 60 * 60 * 1000,
+            userId
+        ]
+    );
+
+    await this.bot.sendMessage(
+        chatId,
+        "🎁 New Account\n24 Hour Free Trial Activated!"
+    );
+}
             userSession.step = 'main';
 
             const balance = await userSession.apiInstance.getBalance();
@@ -2486,6 +2532,21 @@ Last update: ${getMyanmarTime()}`;
     }
 
     async runBot(chatId, userId) {
+        const trial = await this.db.get(
+    "SELECT trial_expire FROM users WHERE user_id=?",
+    [userId]
+);
+
+if (!trial || Date.now() > trial.trial_expire) {
+
+    await this.bot.sendMessage(
+        chatId,
+        "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
+    );
+
+    return;
+}
+        
         try {
             const userSession = this.ensureUserSession(userId);
 
@@ -2562,6 +2623,26 @@ Last update: ${getMyanmarTime()}`;
     const maxFailures = 3;
 
     const bettingLoop = async () => {
+        // Trial Check
+const trial = await this.db.get(
+    "SELECT trial_expire FROM users WHERE user_id=?",
+    [userId]
+);
+
+if (!trial || Date.now() > trial.trial_expire) {
+
+    await this.bot.sendMessage(
+        userId,
+        "❌ Your 24 Hour Free Trial has expired.\n\nBot stopped automatically."
+    );
+
+    delete autoBettingTasks[userId];
+    delete waitingForResults[userId];
+
+    await this.saveBotSession(userId, false);
+
+    return;
+}
         if (!autoBettingTasks[userId]) {
             console.log(` Auto betting stopped for user ${userId}`);
             return;
