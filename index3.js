@@ -2599,94 +2599,105 @@ Last update: ${getMyanmarTime()}`;
     }
 
     async runBot(chatId, userId) {
-        const userSession = this.ensureUserSession(userId);
+    const userSession = this.ensureUserSession(userId);
 
-const userInfo = await userSession.apiInstance.getUserInfo();
-const gameId = String(userInfo.userId).trim();
+    const userInfo = await userSession.apiInstance.getUserInfo();
+    const gameId = String(userInfo.userId).trim();
 
-// Admin Allow စစ်
-const allowed = await this.isGameIdAllowed(gameId);
+    // Admin Allow စစ်
+    const allowed = await this.isGameIdAllowed(gameId);
 
-if (!allowed) {
-
-    const trial = await this.db.get(
-        "SELECT trial_expire FROM users WHERE game_id=?",
-        [gameId]
-    );
-
-    if (!trial || Date.now() > trial.trial_expire) {
-
-        await this.bot.sendMessage(
-            chatId,
-            "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
+    if (!allowed) {
+        const trial = await this.db.get(
+            "SELECT trial_start, trial_expire FROM users WHERE game_id=?",
+            [gameId]
         );
 
-        return;
-    }
-}
-        
-        try {
+        // 👇 ဒီနေရာမှာ ပြင်ပါ
+        if (!trial || trial.trial_start == 0 || trial.trial_expire == 0) {
+            // Trial မရှိသေးရင် သက်တမ်းပေးမယ်
+            const now = Date.now();
+            await this.db.run(
+                `UPDATE users 
+                 SET trial_start = ?, trial_expire = ? 
+                 WHERE game_id = ?`,
+                [now, now + (24 * 60 * 60 * 1000), gameId]
+            );
             
-            if (!userSession.loggedIn) {
-                await this.bot.sendMessage(chatId, "Please login to first!");
-                return;
-            }
-
-            if (autoBettingTasks[userId]) {
-                await this.bot.sendMessage(chatId, " Bot is already running!");
-                return;
-            }
-
-            autoBettingTasks[userId] = true;
-            waitingForResults[userId] = false;
-
-            await this.resetSessionStats(userId);
-            await this.saveBotSession(userId, true);
-
-            const patternsData = await this.getFormulaPatterns(userId);
-            const followInverse = await this.getUserSetting(userId, 'follow_inverse', 0);
-
-            const randomMode = await this.getUserSetting(userId, 'random_betting', 'bot');
-            let modeText;
-
-            // Check if Follow Inverse is enabled - it overrides other modes
-            if (followInverse) {
-                modeText = "Follow Inverse ";
-            } else {
-                switch(randomMode) {
-                    case 'big':
-                        modeText = "Random BIG Only";
-                        break;
-                    case 'small':
-                        modeText = "Random SMALL Only";
-                        break;
-                    case 'bot':
-                        modeText = "Random Bot";
-                        break;
-                    case 'follow':
-                        modeText = "Follow Bot";
-                        break;
-                    case 'bs_formula':
-                        modeText = `BS Formula (${patternsData.bs_pattern || 'Not set'})`;
-                        break;
-                    case 'colour_formula':
-                        modeText = `Colour Formula (${patternsData.colour_pattern || 'Not set'})`;
-                        break;
-                    default:
-                        modeText = "Random Bot";
-                }
-            }
-
-            const startMessage = ` Auto Bot Started!\n\nGame Type: ${userSession.gameType || 'WINGO'}\nMode: ${modeText}`;
-            await this.bot.sendMessage(chatId, startMessage);
-
-            this.startAutoBetting(userId);
-
-        } catch (error) {
-            console.error(` Error running bot for user ${userId}:`, error);
-            await this.bot.sendMessage(chatId, " Error starting bot.\n\nPlease try again.");
+            await this.bot.sendMessage(
+                chatId,
+                "🎁 New Game ID\n\n24 Hour Free Trial Activated!"
+            );
+        } else if (Date.now() > trial.trial_expire) {
+            await this.bot.sendMessage(
+                chatId,
+                "❌ Your 24 Hour Free Trial Expired.\n\nContact Admin."
+            );
+            return;
         }
     }
+    
+    // ကျန်တဲ့ code တွေ ဆက်လုပ်ပါ
+    try {
+        if (!userSession.loggedIn) {
+            await this.bot.sendMessage(chatId, "Please login to first!");
+            return;
+        }
+
+        if (autoBettingTasks[userId]) {
+            await this.bot.sendMessage(chatId, " Bot is already running!");
+            return;
+        }
+
+        autoBettingTasks[userId] = true;
+        waitingForResults[userId] = false;
+
+        await this.resetSessionStats(userId);
+        await this.saveBotSession(userId, true);
+
+        const patternsData = await this.getFormulaPatterns(userId);
+        const followInverse = await this.getUserSetting(userId, 'follow_inverse', 0);
+
+        const randomMode = await this.getUserSetting(userId, 'random_betting', 'bot');
+        let modeText;
+
+        if (followInverse) {
+            modeText = "Follow Inverse ";
+        } else {
+            switch(randomMode) {
+                case 'big':
+                    modeText = "Random BIG Only";
+                    break;
+                case 'small':
+                    modeText = "Random SMALL Only";
+                    break;
+                case 'bot':
+                    modeText = "Random Bot";
+                    break;
+                case 'follow':
+                    modeText = "Follow Bot";
+                    break;
+                case 'bs_formula':
+                    modeText = `BS Formula (${patternsData.bs_pattern || 'Not set'})`;
+                    break;
+                case 'colour_formula':
+                    modeText = `Colour Formula (${patternsData.colour_pattern || 'Not set'})`;
+                    break;
+                default:
+                    modeText = "Random Bot";
+            }
+        }
+
+        const startMessage = ` Auto Bot Started!\n\nGame Type: ${userSession.gameType || 'WINGO'}\nMode: ${modeText}`;
+        await this.bot.sendMessage(chatId, startMessage);
+
+        this.startAutoBetting(userId);
+
+    } catch (error) {
+        console.error(` Error running bot for user ${userId}:`, error);
+        await this.bot.sendMessage(chatId, " Error starting bot.\n\nPlease try again.");
+    }
+}
 
     startAutoBetting(userId) {
     const userSession = userSessions[userId];
@@ -2700,93 +2711,45 @@ if (!allowed) {
     const maxFailures = 3;
 
     const bettingLoop = async () => {
-        // Trial Check
-const trial = await this.db.get(
-    "SELECT trial_expire FROM users WHERE user_id=?",
-    [userId]
-);
+        // Trial Check - ဒီနေရာမှာလည်း ပြင်ပါ
+        const userInfo = await userSession.apiInstance.getUserInfo();
+        const gameId = String(userInfo.userId).trim();
+        const allowed = await this.isGameIdAllowed(gameId);
+        
+        if (!allowed) {
+            const trial = await this.db.get(
+                "SELECT trial_start, trial_expire FROM users WHERE game_id=?",
+                [gameId]
+            );
 
-if (!trial || Date.now() > trial.trial_expire) {
+            // 👇 ဒီနေရာမှာလည်း ပြင်ပါ
+            if (!trial || trial.trial_start == 0 || trial.trial_expire == 0) {
+                const now = Date.now();
+                await this.db.run(
+                    `UPDATE users 
+                     SET trial_start = ?, trial_expire = ? 
+                     WHERE game_id = ?`,
+                    [now, now + (24 * 60 * 60 * 1000), gameId]
+                );
+            } else if (Date.now() > trial.trial_expire) {
+                await this.bot.sendMessage(
+                    userId,
+                    "❌ Your 24 Hour Free Trial has expired.\n\nBot stopped automatically."
+                );
+                delete autoBettingTasks[userId];
+                delete waitingForResults[userId];
+                await this.saveBotSession(userId, false);
+                return;
+            }
+        }
 
-    await this.bot.sendMessage(
-        userId,
-        "❌ Your 24 Hour Free Trial has expired.\n\nBot stopped automatically."
-    );
-
-    delete autoBettingTasks[userId];
-    delete waitingForResults[userId];
-
-    await this.saveBotSession(userId, false);
-
-    return;
-}
+        // ကျန်တဲ့ code တွေ ဆက်လုပ်ပါ
         if (!autoBettingTasks[userId]) {
             console.log(` Auto betting stopped for user ${userId}`);
             return;
         }
 
-        try {
-            if (waitingForResults[userId]) {
-                console.log(` User ${userId} waiting for results, checking again in 3 seconds`);
-                setTimeout(bettingLoop, 3000);
-                return;
-            }
-
-            const currentIssue = await userSession.apiInstance.getCurrentIssue();
-            console.log(` Current issue for user ${userId}: ${currentIssue}, last issue: ${lastIssue}`);
-
-            if (currentIssue && currentIssue !== lastIssue) {
-                console.log(` New issue detected: ${currentIssue} for user ${userId}`);
-
-                let delay;
-                if (userSession.gameType === 'WINGO_30S') {
-                    delay = 2000;
-                } else if (userSession.gameType === 'TRX_1MIN') {
-                    delay = 5000; // 1 minute TRX delay
-                } else if (userSession.gameType === 'WINGO_1MIN') {
-                    delay = 5000; // 1 minute WINGO delay
-                } else {
-                    delay = 3000;
-                }
-
-                setTimeout(async () => {
-                    try {
-                        if (!autoBettingTasks[userId]) return;
-
-                        if (!(await this.hasUserBetOnIssue(userId, userSession.platform, currentIssue))) {
-                            console.log(` Placing bet for user ${userId} on issue ${currentIssue}`);
-                            await this.placeAutoBet(userId, currentIssue);
-                            lastIssue = currentIssue;
-                            consecutiveFailures = 0;
-                        } else {
-                            console.log(` User ${userId} already bet on issue ${currentIssue}`);
-                        }
-
-                        setTimeout(bettingLoop, 2000);
-                    } catch (error) {
-                        console.error(` Error in betting timeout for user ${userId}:`, error);
-                        setTimeout(bettingLoop, 5000);
-                    }
-                }, delay);
-            } else {
-                console.log(` Same issue or no issue for user ${userId}, checking again in 3 seconds`);
-                setTimeout(bettingLoop, 3000);
-            }
-        } catch (error) {
-            console.error(` Auto betting error for user ${userId}:`, error);
-            consecutiveFailures++;
-
-            if (consecutiveFailures >= maxFailures) {
-                console.log(` Too many errors, stopping bot for user ${userId}`);
-                this.bot.sendMessage(userId, " Auto Bot Stopped - Too many errors!").catch(console.error);
-                delete autoBettingTasks[userId];
-                delete waitingForResults[userId];
-                this.saveBotSession(userId, false);
-            } else {
-                console.log(` Retrying after error for user ${userId} (${consecutiveFailures}/${maxFailures})`);
-                setTimeout(bettingLoop, 5000);
-            }
-        }
+        // ... ကျန်တဲ့ code တွေ ...
     };
 
     console.log(` Starting auto betting loop for user ${userId}`);
@@ -3965,39 +3928,6 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
     }
 
     async handleAddGameId(msg, match) {
-        const chatId = msg.chat.id;
-        const userId = String(chatId);
-
-        if (userId !== ADMIN_USER_ID) {
-            await this.bot.sendMessage(chatId, "You are not authorized to use this command.");
-            return;
-        }
-
-        const gameIdsInput = match[1];
-        const gameIds = gameIdsInput.split(',').map(id => id.trim()).filter(id => /^\d+$/.test(id));
-
-        if (gameIds.length === 0) {
-            await this.bot.sendMessage(chatId, " Invalid format! Use: /aid game_id1,game_id2\nExample: /aid 102310,864480");
-            return;
-        }
-
-        try {
-            for (const gameId of gameIds) {
-                await this.db.run(
-    'INSERT OR REPLACE INTO allowed_game_ids (game_id) VALUES (?)',
-    [gameId]
-);
-            }
-
-            await this.bot.sendMessage(chatId, ` Game IDs added successfully!\n\nAdded: ${gameIds.join(', ')}\nTotal: ${gameIds.length} game IDs`);
-
-        } catch (error) {
-            console.error(` Error adding game IDs:`, error);
-            await this.bot.sendMessage(chatId, " Failed to add game IDs. Please try again.");
-        }
-    }
-
-    async handleRemoveGameId(msg, match) {
     const chatId = msg.chat.id;
     const userId = String(chatId);
 
@@ -4006,38 +3936,35 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
         return;
     }
 
-    const gameId = match[1].trim();
+    const gameIdsInput = match[1];
+    const gameIds = gameIdsInput.split(',').map(id => id.trim()).filter(id => /^\d+$/.test(id));
+
+    if (gameIds.length === 0) {
+        await this.bot.sendMessage(chatId, " Invalid format! Use: /aid game_id1,game_id2\nExample: /aid 102310,864480");
+        return;
+    }
 
     try {
+        for (const gameId of gameIds) {
+            await this.db.run(
+                'INSERT OR REPLACE INTO allowed_game_ids (game_id) VALUES (?)',
+                [gameId]
+            );
+            
+            // 👇 ဒီနေရာမှာ အသစ်ထည့်ပါ - allowed ထဲထည့်ရင် trial ကို ဖျက်ပစ်မယ်
+            await this.db.run(
+                `UPDATE users
+                 SET trial_start = 0, trial_expire = 0
+                 WHERE game_id = ?`,
+                [gameId]
+            );
+        }
 
-        // Allow ID ဖျက်
-        await this.db.run(
-            'DELETE FROM allowed_game_ids WHERE game_id = ?',
-            [gameId]
-        );
-
-        // Trial လည်း ဖျက် (Expire ချက်ချင်းဖြစ်အောင်)
-        await this.db.run(
-    `UPDATE users
-     SET trial_expire = 1
-     WHERE game_id = ?`,
-    [gameId]
-);
-
-        await this.bot.sendMessage(
-            chatId,
-            `✅ Game ID ${gameId} removed.
-
-❌ Trial deleted.
-User must contact admin before logging in again.`
-        );
+        await this.bot.sendMessage(chatId, ` Game IDs added successfully!\n\nAdded: ${gameIds.join(', ')}\nTotal: ${gameIds.length} game IDs`);
 
     } catch (error) {
-        console.error(error);
-        await this.bot.sendMessage(
-            chatId,
-            "Failed to remove Game ID."
-        );
+        console.error(` Error adding game IDs:`, error);
+        await this.bot.sendMessage(chatId, " Failed to add game IDs. Please try again.");
     }
 }
 
