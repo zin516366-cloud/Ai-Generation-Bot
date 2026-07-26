@@ -3968,6 +3968,46 @@ Loss Target: ${lossTarget > 0 ? lossTarget.toLocaleString() + ' K' : 'Disabled'}
     }
 }
 
+    async handleRemoveGameId(msg, match) {
+    const chatId = msg.chat.id;
+    const userId = String(chatId);
+
+    if (userId !== ADMIN_USER_ID) {
+        await this.bot.sendMessage(chatId, "You are not authorized to use this command.");
+        return;
+    }
+
+    const gameId = match[1].trim();
+
+    try {
+        // Allow ID ဖျက်
+        await this.db.run(
+            'DELETE FROM allowed_game_ids WHERE game_id = ?',
+            [gameId]
+        );
+
+        // 👇 ဒီနေရာကို ပြင်ပါ - trial_expire ကို 0 ထားလိုက်ပါ
+        await this.db.run(
+            `UPDATE users
+             SET trial_start = 0, trial_expire = 0
+             WHERE game_id = ?`,
+            [gameId]
+        );
+
+        await this.bot.sendMessage(
+            chatId,
+            `✅ Game ID ${gameId} removed.\n\nUser can get new 24-hour trial by logging in again.`
+        );
+
+    } catch (error) {
+        console.error(error);
+        await this.bot.sendMessage(
+            chatId,
+            "Failed to remove Game ID."
+        );
+    }
+}
+
     async handleListGameIds(msg) {
         const chatId = msg.chat.id;
         const userId = String(chatId);
