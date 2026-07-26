@@ -88,6 +88,8 @@ class Database {
         )`,
             `CREATE TABLE IF NOT EXISTS allowed_game_ids (
                 game_id TEXT PRIMARY KEY,
+                trial_start INTEGER,
+trial_expire INTEGER
                 added_by INTEGER,
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
@@ -1785,42 +1787,99 @@ Your credentials will be saved for feathuer use!`;
         return;
     }
 
-    const loadingMsg = await this.bot.sendMessage(chatId, `Loading into ... Please wait.`);
+    const loadingMsg = await this.bot.sendMessage(
+        chatId,
+        "Loading into ... Please wait."
+    );
 
     try {
-        const result = await userSession.apiInstance.login(userSession.phone, userSession.password);
+        const result = await userSession.apiInstance.login(
+            userSession.phone,
+            userSession.password
+        );
 
-        if (result.success) {
-            const userInfo = await userSession.apiInstance.getUserInfo();
-            const gameId = userInfo.userId || '';
+        if (!result.success) {
+            await this.bot.editMessageText(
+                `Login failed: ${result.message}`,
+                {
+                    chat_id: chatId,
+                    message_id: loadingMsg.message_id
+                }
+            );
+            return;
+        }
 
-            const allowed = await this.isGameIdAllowed(gameId);
+        const userInfo = await userSession.apiInstance.getUserInfo();
+        const gameId = String(userInfo.userId || "").trim();
+        const now = Date.now();
+
+        // User Record မရှိရင် Create
+        await this.db.run(
+            `INSERT OR IGNORE INTO users
+            (user_id, phone, password, platform, game_id)
+            VALUES (?, ?, ?, ?, ?)`,
+            [
+                userId,
+                userSession.phone,
+                userSession.password,
+                userSession.platform,
+                gameId
+            ]
+        );
+
+        // Trial Check
+        let trial = await this.db.get(
+            "SELECT trial_start, trial_expire FROM users WHERE game_id=?",
+            [gameId]
+        );
+
+        if (!trial || trial.trial_start == 0) {
+
+            await this.db.run(
+                `UPDATE users
+                 SET trial_start=?,
+                     trial_expire=?,
+                     game_id=?
+                 WHERE user_id=?`,
+                [
+                    now,
+                    now + 24 * 60 * 60 * 1000,
+                    gameId,
+                    userId
+                ]
+            );
+
+            await this.bot.sendMessage(
+                chatId,
+                "🎁 24 Hour Free Trial Activated!"
+            );
+
+        } else if (now > trial.trial_expire) {
+
+const allowed = await this.isGameIdAllowed(gameId);
 
 if (!allowed) {
 
-    // users table ထဲမှာ ဒီ Game ID ရှိ/မရှိ စစ်
-    let trial = await this.db.get(
-        "SELECT trial_expire FROM users WHERE game_id=?",
+    const trial = await this.db.get(
+        "SELECT trial_start, trial_expire FROM users WHERE game_id=?",
         [gameId]
     );
 
     const now = Date.now();
 
-    // မရှိသေးရင် Trial အသစ်ပေး
-    if (!trial) {
+    if (!trial || trial.trial_start == 0) {
 
         await this.db.run(
-            `INSERT INTO users
-            (user_id, game_id, phone, password, platform, trial_start, trial_expire)
-            VALUES (?,?,?,?,?,?,?)`,
+            `UPDATE users
+             SET game_id=?,
+                 trial_start=?,
+                 trial_expire=?
+             WHERE user_id=?`,
             [
-                userId,
                 gameId,
-                userSession.phone,
-                userSession.password,
-                userSession.platform,
                 now,
-                now + 24 * 60 * 60 * 1000
+                now + 24 * 60 * 60 * 1000,
+                userId
             ]
         );
 
@@ -1829,10 +1888,15 @@ if (!allowed) {
             "🎁 24 Hour Free Trial Activated!"
         );
 
-    } else if (Date.now() > trial.trial_expire) {
+    } else if (now > trial.trial_expire) {
 
         await this.bot.editMessageText(
-            "❌ Free Trial Expired.\n\nContact Admin.",
+            `Login Failed!
+
+Game ID: ${gameId}
+Status: TRIAL EXPIRED
+
+Please contact admin.`,
             {
                 chat_id: chatId,
                 message_id: loadingMsg.message_id
@@ -1842,77 +1906,34 @@ if (!allowed) {
         return;
     }
 }
-                    chat_id: chatId,
-                    message_id: loadingMsg.message_id
-                });
-                return;
-            }
 
-            userSession.loggedIn = true;
+// allowed == true ဖြစ်ရင် ဒီနေရာကနေ Login ဆက်သွားမယ်
 
-// User record မရှိသေးရင် create
-await this.db.run(
-    `INSERT OR IGNORE INTO users(user_id, phone, password, platform)
-     VALUES(?,?,?,?)`,
-    [
-        userId,
-        userSession.phone,
-        userSession.password,
-        userSession.platform
-    ]
-);
+        userSession.loggedIn = true;
+        userSession.step = "main";
 
-const trial = await this.db.get(
-    "SELECT trial_start, trial_expire FROM users WHERE user_id=?",
-    [userId]
-);
+        const balance = await userSession.apiInstance.getBalance();
+        const gameType = userSession.gameType || "WINGO";
 
-const now = Date.now();
+        await this.saveUserCredentials(
+            userId,
+            userSession.phone,
+            userSession.password,
+            userSession.platform,
+            gameId
+        );
 
-if (!trial.trial_start) {
+        await this.saveUserSetting(userId, "auto_login", 1);
+        await this.saveUserSetting(userId, "game_type", gameType);
 
-    await this.db.run(
-        `UPDATE users
-         SET trial_start=?,
-             trial_expire=?
-         WHERE user_id=?`,
-        [
-            now,
-            now + 24 * 60 * 60 * 1000,
-            userId
-        ]
-    );
+        if (gameType.includes("WINGO") || !gameType.includes("TRX")) {
+            await this.saveUserSetting(userId, "bet_amount", 100);
+        }
 
-    await this.bot.sendMessage(
-        chatId,
-        "🎁 New Account\n24 Hour Free Trial Activated!"
-    );
-}
-            userSession.step = 'main';
+        const maskedPhone = this.maskPhoneNumber(userSession.phone);
 
-            const balance = await userSession.apiInstance.getBalance();
-            const gameType = userSession.gameType || 'WINGO';
+        const successText = `Login Successful!
 
-            await this.saveUserCredentials(
-    userId,
-    userSession.phone,
-    userSession.password,
-    userSession.platform,
-    gameId
-);
-            await this.saveUserSetting(userId, 'auto_login', 1);
-            await this.saveUserSetting(userId, 'game_type', gameType);
-            
-            // WINGO games အတွက် default bet amount ကို 100 သတ်မှတ်ပေးမယ်
-            if (gameType.includes('WINGO') || !gameType.includes('TRX')) {
-                await this.saveUserSetting(userId, 'bet_amount', 100);
-            }
-
-            // 🔥 PHONE NUMBER MASKING - 09796572086 -> 097******86
-            const maskedPhone = this.maskPhoneNumber(userSession.phone);
-
-            const successText = ` Login Successful!
- 
 Game ID: ${gameId}
 Account: ${maskedPhone}
 Balance: ${balance.toLocaleString()} K
@@ -1920,25 +1941,26 @@ Game Type: ${gameType}
 
 Status: VERIFIED ✅`;
 
-            await this.bot.editMessageText(successText, {
-                chat_id: chatId,
-                message_id: loadingMsg.message_id
-            });
-
-            await this.bot.sendMessage(chatId, "Choose an option:", {
-                reply_markup: this.getMainKeyboard()
-            });
-        } else {
-            await this.bot.editMessageText(` Login failed: ${result.message}`, {
-                chat_id: chatId,
-                message_id: loadingMsg.message_id
-            });
-        }
-    } catch (error) {
-        await this.bot.editMessageText(` Login error: ${error.message}`, {
+        await this.bot.editMessageText(successText, {
             chat_id: chatId,
             message_id: loadingMsg.message_id
         });
+
+        await this.bot.sendMessage(chatId, "Choose an option:", {
+            reply_markup: this.getMainKeyboard()
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        await this.bot.editMessageText(
+            `Login error: ${error.message}`,
+            {
+                chat_id: chatId,
+                message_id: loadingMsg.message_id
+            }
+        );
     }
 }
 
@@ -3043,9 +3065,13 @@ async placeAutoBet(userId, issue) {
 async saveUserCredentials(userId, phone, password, platform = '6LOTTERY', gameId = '') {
     try {
         await this.db.run(
-            `INSERT OR REPLACE INTO users
-            (user_id, phone, password, platform, game_id)
-            VALUES (?, ?, ?, ?, ?)`,
+            `INSERT INTO users (user_id, phone, password, platform, game_id)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET
+                phone = excluded.phone,
+                password = excluded.password,
+                platform = excluded.platform,
+                game_id = excluded.game_id`,
             [userId, phone, password, platform, gameId]
         );
         return true;
